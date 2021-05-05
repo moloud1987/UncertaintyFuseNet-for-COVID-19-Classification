@@ -9,6 +9,7 @@ The COVID-19 (Coronavirus disease 2019) has infected more than 151 million peopl
 ![Test Image 1](UncertaintyFuseNet.png)
 
 # Datasets
+Details of the COVI-19 datasets used in this study with some random samples: 
 
 ![Test Image 1](Datasets.PNG)
 

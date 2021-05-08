@@ -13,7 +13,7 @@ pandas, tensorflow, keras, sklearn, numpy, matplotlib
 
 
 # Datasets
-Details of the COVI-19 datasets used in this study with some random samples: 
+Details of the COVID-19 datasets used in this study with some random samples: 
 
 ![Test Image 1](Datasets.PNG)
 

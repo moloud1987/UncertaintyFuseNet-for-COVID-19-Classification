@@ -4,17 +4,13 @@ from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, BatchNormali
 from tensorflow.keras.layers import Conv2D, SeparableConv2D, MaxPool2D
 from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
 
-
-
-
 def get_dropout(input_tensor, rate, mc=False):
     if mc:
         return Dropout(rate=rate)(input_tensor, training=True)
     else:
         return Dropout(rate=rate)(input_tensor)
 
-
-# Our Proposed Model:
+# Our Proposed Fusion Model:
 def fusion_model(mc, image_size=150, lr=0.00005):
     inputs = Input(shape=(image_size, image_size, 1))
     input2 = tf.stack([inputs, inputs, inputs], axis=3)[:, :, :, :, 0]
@@ -95,7 +91,6 @@ def fusion_model(mc, image_size=150, lr=0.00005):
 
     return model, callbacks
 
-
 # Simple CNN Model:
 def simple_cnn_model(mc, image_size=150, lr=0.00005):
     inputs = Input(shape=(image_size, image_size, 1))
@@ -149,7 +144,6 @@ def simple_cnn_model(mc, image_size=150, lr=0.00005):
     callbacks = [reduce_lr, es, mcheck]
 
     return model, callbacks
-
 
 # Multi-headed Model:
 def multi_headed_model(mc, image_size=150, lr=0.00001):

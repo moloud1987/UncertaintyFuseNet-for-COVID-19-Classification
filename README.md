@@ -9,15 +9,15 @@ pandas, tensorflow, keras, sklearn, numpy, matplotlib
 
 # Proposed Architecture of UncertaintyFuseNet
 
-![Test Image 1](UncertaintyFuseNet.png)
+![Test Image 1](images/UncertaintyFuseNet.png)
 
 
 # Datasets
 Details of the COVID-19 datasets used in this study with some random samples: 
 
-![Test Image 1](Datasets.PNG)
+![Test Image 1](images/Datasets.PNG)
 
-![Test Image 1](Samples.PNG)
+![Test Image 1](images/Samples.PNG)
 
 # Detailed Results
 The detailed results are available in the paper: 

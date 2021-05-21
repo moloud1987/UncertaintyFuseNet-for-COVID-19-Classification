@@ -20,4 +20,4 @@ Details of the COVID-19 datasets used in this study with some random samples:
 ![Test Image 1](images/Samples.PNG)
 
 # Detailed Results
-The detailed results are available in the paper: 
+The detailed results are available in the paper: https://arxiv.org/abs/2105.08590

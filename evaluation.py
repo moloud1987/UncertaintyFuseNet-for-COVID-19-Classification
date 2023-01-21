@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
+
 def mode_robustness(x_test, y_test, model, std_coef, number_prediction=200):
      result = []
      for std in std_coef:
@@ -25,6 +26,7 @@ def mode_robustness(x_test, y_test, model, std_coef, number_prediction=200):
 
         result = [ensemble_acc * 100, ensemble_precision * 100, ensemble_recall * 100, ensemble_F1 * 100]
         print("[{:0.5f}, {:0.5f}, {:0.5f}, {:0.5f}]\n".format(*result))
+
 
 def evaluation(y_test, y_pred):
     acc = accuracy_score(y_test, y_pred)

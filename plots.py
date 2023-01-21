@@ -12,8 +12,12 @@ matplotlib.rc('ytick', labelsize=22)
 plt.rcParams.update({'font.size': 22})
 
 
-def plot_roc_handy(y_test, y_score, lw=2, name='Roc', class_name=['COVID19', 'Normal', 'Pneumonia'], zoom=False,
-                   axis=[0.0, 0.12, 0.88, 1.0]):
+def plot_roc_handy(y_test, y_score, lw=2, name='Roc', class_name=None, zoom=False,
+                   axis=None):
+    if axis is None:
+        axis = [0.0, 0.12, 0.88, 1.0]
+    if class_name is None:
+        class_name = ['COVID19', 'Normal', 'Pneumonia']
     fpr = dict()
     tpr = dict()
     roc_auc = dict()
@@ -87,8 +91,10 @@ def plot_roc_handy(y_test, y_score, lw=2, name='Roc', class_name=['COVID19', 'No
 
 
 def plot_cm_handy(y_test, y_score, lw=2, name='Confusion Matrix of Fusion Model without Uncertainty (X-Ray)',
-                  class_name=['COVID19', 'Normal', 'Pneumonia']):
+                  class_name=None):
 
+    if class_name is None:
+        class_name = ['COVID19', 'Normal', 'Pneumonia']
     CM = confusion_matrix(np.argmax(y_test, axis=1), np.argmax(y_score, axis=1))
     cm = CM
     cmap = plt.cm.Blues

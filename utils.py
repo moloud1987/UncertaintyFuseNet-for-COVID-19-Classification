@@ -9,8 +9,10 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import train_test_split
 import tensorflow as tf
 
+
 def rgb2gray(rgb):
     return np.dot(rgb[..., :3], [0.2989, 0.5870, 0.1140])
+
 
 def transform_images(images: np.ndarray):
     """
@@ -18,6 +20,7 @@ def transform_images(images: np.ndarray):
     """
     images = 2 * images.astype(np.float32) - 1
     return images
+
 
 def load_covid_data(image_size=150, path='../Data/train', shuffle=False, class_frequency=False):
     size = image_size
@@ -27,7 +30,7 @@ def load_covid_data(image_size=150, path='../Data/train', shuffle=False, class_f
 
     for direct in files:
         files_in_folder = glob.glob(path + '/' + direct + '/*.jpg')
-          for file in files_in_folder:
+        for file in files_in_folder:
             data = plt.imread(file)
             data = cv2.resize(data, (size, size))
             data = data.astype('float32') / 255
@@ -65,8 +68,8 @@ def load_covid_data(image_size=150, path='../Data/train', shuffle=False, class_f
         plt.show()
     return X, Y
 
-def create_dataset_xray(x_train, y_train, x_test, y_test, batch_size=32):
 
+def create_dataset_xray(x_train, y_train, x_test, y_test, batch_size=32):
     train_dataset = tf.data.Dataset.from_tensor_slices((x_train, y_train))
     train_dataset = train_dataset.batch(batch_size)
     train_dataset = train_dataset.cache()
@@ -78,6 +81,7 @@ def create_dataset_xray(x_train, y_train, x_test, y_test, batch_size=32):
     validation_dataset = validation_dataset.prefetch(tf.data.experimental.AUTOTUNE)
 
     return train_dataset, validation_dataset
+
 
 def create_dataset_ct(X, Y, batch_size):
     np.random.seed(0)

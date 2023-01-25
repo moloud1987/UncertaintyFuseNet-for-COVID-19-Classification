@@ -3,353 +3,227 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Flatten, Dropout, BatchNormalization, Concatenate
 from tensorflow.keras.layers import Conv2D, SeparableConv2D, MaxPool2D
 from tensorflow.keras.callbacks import ModelCheckpoint, ReduceLROnPlateau, EarlyStopping
+from abc import abstractmethod
 
 
-def get_dropout(input_tensor, rate, mc=False):
-    if mc:
-        return Dropout(rate=rate)(input_tensor, training=True)
-    else:
-        return Dropout(rate=rate)(input_tensor)
+class ImageClassifierBase:
+
+    def __init__(self, input_shape, lr, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
+        self.input_shape = input_shape
+        self.lr = lr
+        self.mc = mc
+        self.metrics = metrics
+        self.trunc = trunc
+        self.trained_model = trained_model
+        self.model_name = model_name + "_with_mc" if self.mc else model_name + "_without_mc"
+
+    def get_model(self):
+        inputs = Input(shape=self.input_shape)
+        feature_extraction_output = self._feature_extraction(inputs)
+        output = self._fusion_layer(*feature_extraction_output)
+        output = self._classifier(output)
+
+        model = Model(inputs=inputs, outputs=output)
+
+        if self.trained_model:
+            for i, layer in enumerate(model.layers):
+                layer.set_weights(self.trained_model.layers[i].get_weights())
+
+        callbacks = None if self.trunc else self._get_callbacks()
+
+        return model, callbacks
+
+    def _compile_model(self, model):
+        adam = tf.keras.optimizers.Adam(lr=self.lr)
+
+        compile_dict = {
+            "optimizer": adam,
+            "loss": "categorical_crossentropy"
+        }
+
+        if self.metrics:
+            compile_dict["metrics"] = ['accuracy', self._get_metrics()]
+
+        model.compile(**compile_dict)
+
+        return model
+
+    def _get_callbacks(self):
+        model_checkpoint = ModelCheckpoint(f"{self.model_name}.h5", monitor='val_accuracy', mode='max', verbose=1,
+                                           save_best_only=True)
+
+        reduce_lr = ReduceLROnPlateau(monitor='val_accuracy', factor=0.8, verbose=1, patience=5)
+        es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=0, patience=30)
+        return [reduce_lr, es, model_checkpoint]
+
+    @abstractmethod
+    def _feature_extraction(self, inputs):
+        pass
+
+    def _fusion_layer(self, *args):
+        flattened = [Flatten(layer) for layer in args]
+        concatenated_tensor = Concatenate(axis=1)(flattened)
+        return concatenated_tensor
+
+    @abstractmethod
+    def _classifier(self, concatenated_features):
+        pass
+
+    def _get_metrics(self):
+        return [
+            tf.keras.metrics.Precision(name='precision'),
+            tf.keras.metrics.Recall(name='recall'),
+            tf.keras.metrics.AUC(name='auc')]
+
+    def _get_dropout(self, input_tensor, rate):
+        if self.mc:
+            return Dropout(rate=rate)(input_tensor, training=True)
+        else:
+            return Dropout(rate=rate)(input_tensor)
 
 
 # Our Proposed Fusion Model:
-def fusion_model(mc, image_size=150, lr=0.00005):
-    inputs = Input(shape=(image_size, image_size, 1))
-    input2 = tf.stack([inputs, inputs, inputs], axis=3)[:, :, :, :, 0]
-    vgg_model = tf.keras.applications.VGG16(weights='imagenet',
-                                            include_top=False,
-                                            input_shape=(image_size, image_size, 3))
-    vgg_model.trainable = False
+class FusionModel(ImageClassifierBase):
 
-    vgg_feature = vgg_model(input2)
-    # First conv block
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
+    def __init__(self,  input_shape, lr, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
+        super().__init__(input_shape, lr, mc, metrics, trunc, trained_model, model_name)
 
-    # Second conv block
-    conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv2 = BatchNormalization()(conv2)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
+    def _feature_extraction(self, inputs):
+        input2 = tf.stack([inputs, inputs, inputs], axis=3)[:, :, :, :, 0]
+        vgg_model = tf.keras.applications.VGG16(weights='imagenet',
+                                                include_top=False,
+                                                input_shape=(self.input_shape[0], self.input_shape[1], 3))
+        vgg_model.trainable = False
 
-    # Third conv block
-    conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv3 = BatchNormalization()(conv3)
-    conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
+        vgg_feature = vgg_model(input2)
+        # First conv block
+        conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
+        conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
+        conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
 
-    # Fourth conv block
-    conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same', name='target_layer')(
-        conv4)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
-    conv4 = get_dropout(conv4, rate=0.2, mc=mc)
+        # Second conv block
+        conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
+        conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
+        conv2 = BatchNormalization()(conv2)
+        conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
 
-    # Fifth conv block
-    conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
-    conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv5)
-    conv5 = BatchNormalization()(conv5)
-    conv5 = MaxPool2D(pool_size=(2, 2))(conv5)
-    conv5 = get_dropout(conv5, rate=0.2, mc=mc)
+        # Third conv block
+        conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
+        conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
+        conv3 = BatchNormalization()(conv3)
+        conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
 
-    concatenated_tensor = Concatenate(axis=1)(
-        [Flatten()(conv3), Flatten()(conv4), Flatten()(conv5), Flatten()(vgg_feature)])
+        # Fourth conv block
+        conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
+        conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same', name='target_layer')(
+            conv4)
+        conv4 = BatchNormalization()(conv4)
+        conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
+        conv4 = self._get_dropout(conv4, rate=0.2)
 
-    # FC layer
-    x = Flatten()(concatenated_tensor)
-    x = Dense(units=512, activation='relu')(x)
+        # Fifth conv block
+        conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
+        conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv5)
+        conv5 = BatchNormalization()(conv5)
+        conv5 = MaxPool2D(pool_size=(2, 2))(conv5)
+        conv4 = self._get_dropout(conv4, rate=0.2)
 
-    x = get_dropout(x, rate=0.7, mc=mc)
-    x = Dense(units=128, activation='relu')(x)
-    x = get_dropout(x, rate=0.5, mc=mc)
-    x = Dense(units=64, activation='relu')(x)
-    x = get_dropout(x, rate=0.3, mc=mc)
-    # Output layer
-    output = Dense(3, activation='softmax')(x)
+        output_list = [conv3, conv4, conv5, vgg_feature]
 
-    METRICS = [
-        tf.keras.metrics.Precision(name='precision'),
-        tf.keras.metrics.Recall(name='recall'),
-        tf.keras.metrics.AUC(name='auc')]
+        return output_list
 
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy', metrics=['accuracy', METRICS])
+    def _classifier(self, concatenated_features):
+        x = Flatten()(concatenated_features)
+        x = Dense(units=512, activation='relu')(x)
 
-    # Callbacks
-    if mc:
-        mcheck = ModelCheckpoint('model_covid_mc.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
-    else:
-        mcheck = ModelCheckpoint('model_covid_simple.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
+        if not self.trunc:
 
-    reduce_lr = ReduceLROnPlateau(monitor='val_accuracy', factor=0.8, verbose=1, patience=5)
-    es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=0, patience=30)
-    callbacks = [reduce_lr, es, mcheck]
+            x = self._get_dropout(x, rate=0.7)
+            x = Dense(units=128, activation='relu')(x)
+            x = self._get_dropout(x, rate=0.5)
+            x = Dense(units=64, activation='relu')(x)
+            x = self._get_dropout(x, rate=0.3)
+            x = Dense(3, activation='softmax')(x)
 
-    return model, callbacks
+        return x
 
 
 # Simple CNN Model:
-def simple_cnn_model(mc, image_size=150, lr=0.00005):
-    inputs = Input(shape=(image_size, image_size, 1))
+class SimpleCNNModel(ImageClassifierBase):
 
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
+    def __init__(self,  input_shape, lr, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
+        super().__init__(input_shape, lr, mc, metrics, trunc, trained_model, model_name)
 
-    conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
+    def _feature_extraction(self, inputs):
+        conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
 
-    conv3 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
+        conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
+        conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
 
-    conv4 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
+        conv3 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
 
-    conv5 = Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
-    conv5 = BatchNormalization()(conv5)
-    conv5 = get_dropout(conv5, rate=0.2, mc=mc)
+        conv4 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
+        conv4 = BatchNormalization()(conv4)
+        conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
 
-    # FC layer
-    x = Flatten()(conv5)
+        conv5 = Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
+        conv5 = BatchNormalization()(conv5)
+        conv5 = self._get_dropout(conv5, rate=0.2)
 
-    x = Dense(units=128, activation='relu')(x)
-    x = get_dropout(x, rate=0.7, mc=mc)
+        return [conv5]
 
-    x = Dense(units=64, activation='relu')(x)
-    x = get_dropout(x, rate=0.5, mc=mc)
+    def _classifier(self, concatenated_features):
+        x = Flatten()(concatenated_features)
 
-    # Output layer
-    output = Dense(3, activation='softmax')(x)
+        x = Dense(units=128, activation='relu')(x)
 
-    METRICS = [
-        tf.keras.metrics.Precision(name='precision'),
-        tf.keras.metrics.Recall(name='recall'),
-        tf.keras.metrics.AUC(name='auc')]
+        if not self.trunc:
+            x = self._get_dropout(x, rate=0.7)
+            x = Dense(units=64, activation='relu')(x)
+            x = self._get_dropout(x, rate=0.5)
 
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy', metrics=['accuracy', METRICS])
+            x = Dense(3, activation='softmax')(x)
 
-    # Callbacks
-    if mc:
-        mcheck = ModelCheckpoint('simple_cnn_model_covid_mc.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
-    else:
-        mcheck = ModelCheckpoint('simple_cnn_model_covid_simple.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
-    reduce_lr = ReduceLROnPlateau(monitor='val_accuracy', factor=0.8, verbose=1, patience=5)
-    es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=0, patience=30)
-    callbacks = [reduce_lr, es, mcheck]
-
-    return model, callbacks
+        return x
 
 
 # Multi-headed Model:
-def multi_headed_model(mc, image_size=150, lr=0.00001):
-    inputs = Input(shape=(image_size, image_size, 1))
+class MultiHeadedModel(ImageClassifierBase):
 
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv1 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv1 = BatchNormalization()(conv1)
-    conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
-    conv1 = get_dropout(conv1, rate=0.2, mc=mc)
+    def __init__(self, input_shape, lr, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
+        super().__init__(input_shape, lr, mc, metrics, trunc, trained_model, model_name)
 
-    conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv2 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv2 = BatchNormalization()(conv2)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
-    conv2 = get_dropout(conv2, rate=0.2, mc=mc)
+    def _feature_extraction(self, inputs):
+        conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
+        conv1 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
+        conv1 = BatchNormalization()(conv1)
+        conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
+        conv1 = self._get_dropout(conv1, rate=0.2)
 
-    conv3 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv3 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv3 = BatchNormalization()(conv3)
-    conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
-    conv3 = get_dropout(conv3, rate=0.2, mc=mc)
+        conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
+        conv2 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
+        conv2 = BatchNormalization()(conv2)
+        conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
+        conv2 = self._get_dropout(conv2, rate=0.2)
 
-    concatenated_tensor = Concatenate(axis=1)([Flatten()(conv1), Flatten()(conv2), Flatten()(conv3)])
+        conv3 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
+        conv3 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
+        conv3 = BatchNormalization()(conv3)
+        conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
+        conv3 = self._get_dropout(conv3, rate=0.2)
 
-    # FC layer
-    x = Flatten()(concatenated_tensor)
-    x = Dense(units=128, activation='relu')(x)
+        output_list = [conv1, conv2, conv3]
 
-    x = get_dropout(x, rate=0.7, mc=mc)
-    x = Dense(units=64, activation='relu')(x)
-    x = get_dropout(x, rate=0.5, mc=mc)
+        return output_list
 
-    # Output layer
-    output = Dense(3, activation='softmax')(x)
+    def _classifier(self, concatenated_features):
+        x = Flatten()(concatenated_features)
+        x = Dense(units=128, activation='relu')(x)
 
-    METRICS = [
-        tf.keras.metrics.Precision(name='precision'),
-        tf.keras.metrics.Recall(name='recall'),
-        tf.keras.metrics.AUC(name='auc')]
+        if not self.trunc:
+            x = self._get_dropout(x, rate=0.7)
+            x = Dense(units=64, activation='relu')(x)
+            x = self._get_dropout(x, rate=0.5)
+            x = Dense(3, activation='softmax')(x)
 
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy', metrics=['accuracy', METRICS])
-
-    # Callbacks
-    if mc:
-        mcheck = ModelCheckpoint('multi_headed_model_covid_mc.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
-    else:
-        mcheck = ModelCheckpoint('multi_headed_model_covid_simple.h5', monitor='val_accuracy', mode='max', verbose=1,
-                                 save_best_only=True)
-    reduce_lr = ReduceLROnPlateau(monitor='val_accuracy', factor=0.8, verbose=1, patience=5)
-    es = EarlyStopping(monitor='val_accuracy', mode='max', verbose=0, patience=30)
-    callbacks = [reduce_lr, es, mcheck]
-
-    return model, callbacks
-
-
-# Truncated Models Used in t-SNE:
-def simple_cnn_trunc_model(trained_model, mc, image_size=150, lr=0.00005):
-    inputs = Input(shape=(image_size, image_size, 1))
-
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-
-    conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
-
-    conv3 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-
-    conv4 = Conv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
-
-    conv5 = Conv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
-    conv5 = BatchNormalization()(conv5)
-    conv5 = get_dropout(conv5, rate=0.2, mc=mc)
-
-    # Output layer
-    x = Flatten()(conv5)
-    x = Dense(units=128, activation='relu')(x)
-    output = x
-
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy')
-
-    for i, layer in enumerate(model.layers):
-        layer.set_weights(trained_model.layers[i].get_weights())
-
-    model.compile(optimizer=adam, loss='categorical_crossentropy')
-
-    return model
-
-
-def multi_headed_trunc_model(trained_model, mc, image_size=150, lr=0.00001):
-    inputs = Input(shape=(image_size, image_size, 1))
-
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv1 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv1 = BatchNormalization()(conv1)
-    conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
-    conv1 = get_dropout(conv1, rate=0.2, mc=mc)
-
-    conv2 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv2 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv2 = BatchNormalization()(conv2)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
-    conv2 = get_dropout(conv2, rate=0.2, mc=mc)
-
-    conv3 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv3 = Conv2D(filters=8, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv3 = BatchNormalization()(conv3)
-    conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
-    conv3 = get_dropout(conv3, rate=0.2, mc=mc)
-
-    concatenated_tensor = Concatenate(axis=1)([Flatten()(conv1), Flatten()(conv2), Flatten()(conv3)])
-
-    # Output layer
-    x = Flatten()(concatenated_tensor)
-    x = Dense(units=128, activation='relu')(x)
-    output = x
-
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy')
-
-    for i, layer in enumerate(model.layers):
-        layer.set_weights(trained_model.layers[i].get_weights())
-
-    model.compile(optimizer=adam, loss='categorical_crossentropy')
-
-    return model
-
-
-def fusion_trunc_model(trained_model, mc, image_size=150, lr=0.00005):
-    inputs = Input(shape=(image_size, image_size, 1))
-    input2 = tf.stack([inputs, inputs, inputs], axis=3)[:, :, :, :, 0]
-    vgg_model = tf.keras.applications.VGG16(weights='imagenet',
-                                            include_top=False,
-                                            input_shape=(image_size, image_size, 3))
-    vgg_model.trainable = False
-
-    vgg_feature = vgg_model(input2)
-    # First conv block
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(inputs)
-    conv1 = Conv2D(filters=16, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv1 = MaxPool2D(pool_size=(2, 2))(conv1)
-
-    # Second conv block
-    conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv1)
-    conv2 = SeparableConv2D(filters=32, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv2 = BatchNormalization()(conv2)
-    conv2 = MaxPool2D(pool_size=(2, 2))(conv2)
-
-    # Third conv block
-    conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv2)
-    conv3 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv3 = BatchNormalization()(conv3)
-    conv3 = MaxPool2D(pool_size=(2, 2))(conv3)
-
-    # Fourth conv block
-    conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv3)
-    conv4 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same', name='target_layer')(
-        conv4)
-    conv4 = BatchNormalization()(conv4)
-    conv4 = MaxPool2D(pool_size=(2, 2))(conv4)
-    conv4 = get_dropout(conv4, rate=0.2, mc=mc)
-
-    # Fifth conv block
-    conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv4)
-    conv5 = SeparableConv2D(filters=64, kernel_size=(3, 3), activation='relu', padding='same')(conv5)
-    conv5 = BatchNormalization()(conv5)
-    conv5 = MaxPool2D(pool_size=(2, 2))(conv5)
-    conv5 = get_dropout(conv5, rate=0.2, mc=mc)
-
-    concatenated_tensor = Concatenate(axis=1)(
-        [Flatten()(conv3), Flatten()(conv4), Flatten()(conv5), Flatten()(vgg_feature)])
-
-    # Output layer
-    x = Flatten()(concatenated_tensor)
-    x = Dense(units=512, activation='relu')(x)
-
-    output = Dense(3, activation='softmax')(x)
-
-    METRICS = [
-        tf.keras.metrics.Precision(name='precision'),
-        tf.keras.metrics.Recall(name='recall'),
-        tf.keras.metrics.AUC(name='auc')]
-
-    # Creating model and compiling
-    model = Model(inputs=inputs, outputs=output)
-    adam = tf.keras.optimizers.Adam(lr=lr)
-    model.compile(optimizer=adam, loss='categorical_crossentropy')
-
-    for i, layer in enumerate(model.layers):
-        layer.set_weights(trained_model.layers[i].get_weights())
-
-    model.compile(optimizer='adam',
-                  loss='categorical_crossentropy')
-
-    return model
+        return x

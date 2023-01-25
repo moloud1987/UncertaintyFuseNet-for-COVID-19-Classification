@@ -40,8 +40,8 @@ class GradCAM:
         weights = tf.reduce_mean(guided_grads, axis=(0, 1))
         cam = tf.reduce_sum(tf.multiply(weights, conv_outputs), axis=-1)
 
-        # (w, h) = (image.shape[1], image.shape[2])
-        (w, h) = (150, 150)
+        (w, h) = (image.shape[1], image.shape[2])
+        # (w, h) = (150, 150)
         heatmap = cv2.resize(cam.numpy(), (w, h))
 
         numer = heatmap - np.min(heatmap)

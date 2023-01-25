@@ -85,7 +85,7 @@ class ImageClassifierBase:
 # Our Proposed Fusion Model:
 class FusionModel(ImageClassifierBase):
 
-    def __init__(self,  input_shape, lr, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
+    def __init__(self,  input_shape=(150, 150, 1), lr=0.00005, mc=True, metrics=True, trunc=False, trained_model=None, model_name="test"):
         super().__init__(input_shape, lr, mc, metrics, trunc, trained_model, model_name)
 
     def _feature_extraction(self, inputs):
